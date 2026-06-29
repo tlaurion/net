@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
+// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
 
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -12,16 +12,23 @@
 package http
 
 import (
+	"crypto/tls"
 	"io"
-	"sync/atomic"
 )
 
 type readTrackingBody struct {
 	io.ReadCloser
-	didRead  bool // not atomic.Bool because only one goroutine (the user's) should be accessing
-	didClose atomic.Bool
+	didRead  bool
+	didClose bool
 }
 
-type Transport struct{}
+type Transport struct {
+	TLSClientConfig *tls.Config
+}
 
 var DefaultTransport RoundTripper = &Transport{}
+
+// roundTrip implements a RoundTripper over HTTP.
+func (t *Transport) RoundTrip(req *Request) (*Response, error) {
+	return roundTrip(req)
+}

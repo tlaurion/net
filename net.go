@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
+// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -14,8 +14,8 @@ import (
 
 // Addr represents a network end point address.
 //
-// The two methods [Addr.Network] and [Addr.String] conventionally return strings
-// that can be passed as the arguments to [Dial], but the exact form
+// The two methods Network and String conventionally return strings
+// that can be passed as the arguments to Dial, but the exact form
 // and meaning of the strings is up to the implementation.
 type Addr interface {
 	Network() string // name of the network (for example, "tcp", "udp")
@@ -38,8 +38,6 @@ type Conn interface {
 
 	// Close closes the connection.
 	// Any blocked Read or Write operations will be unblocked and return errors.
-	// Close may or may not block until any buffered data is sent;
-	// for TCP connections see [*TCPConn.SetLinger].
 	Close() error
 
 	// LocalAddr returns the local network address, if known.
@@ -303,6 +301,13 @@ func (e *AddrError) Error() string {
 	}
 	return s
 }
+
+// InvalidAddrError is an error type representing an invalid address.
+type InvalidAddrError string
+
+func (e InvalidAddrError) Error() string { return string(e) }
+func (e InvalidAddrError) Timeout() bool   { return false }
+func (e InvalidAddrError) Temporary() bool { return false }
 
 // errNetClosing is the type of the variable ErrNetClosing.
 // This is used to implement the net.Error interface.

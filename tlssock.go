@@ -9,6 +9,7 @@
 package net
 
 import (
+	"errors"
 	"internal/itoa"
 	"io"
 	"net/netip"
@@ -137,5 +138,26 @@ func (c *TLSConn) SetWriteDeadline(t time.Time) error {
 // HandshakeContext or the Dialer's DialContext method instead.
 func (c *TLSConn) Handshake() error {
 	panic("TLSConn.Handshake() not implemented")
+	return nil
+}
+
+// TLSConnectionState contains basic TLS details about the connection.
+type TLSConnectionState struct {
+	HandshakeComplete bool
+}
+
+
+// ConnectionState returns basic TLS details about the connection.
+func (c *TLSConn) ConnectionState() TLSConnectionState {
+	return TLSConnectionState{HandshakeComplete: false}
+}
+
+// CloseWrite shuts down the writing side of the TLS connection.
+func (c *TLSConn) CloseWrite() error {
+	return errors.New("TLSConn.CloseWrite not implemented")
+}
+
+// NetConn returns the underlying connection that is wrapped by c.
+func (c *TLSConn) NetConn() *TCPConn {
 	return nil
 }

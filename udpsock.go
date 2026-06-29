@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
+// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -9,6 +9,7 @@ package net
 import (
 	"errors"
 	"fmt"
+	"internal/itoa"
 	"io"
 	"net/netip"
 	"strconv"
@@ -23,7 +24,7 @@ type UDPAddr struct {
 	Zone string // IPv6 scoped addressing zone
 }
 
-// AddrPort returns the [UDPAddr] a as a [netip.AddrPort].
+// AddrPort returns the UDPAddr a as a netip.AddrPort.
 //
 // If a.Port does not fit in a uint16, it's silently truncated.
 //
@@ -46,9 +47,9 @@ func (a *UDPAddr) String() string {
 	}
 	ip := ipEmptyString(a.IP)
 	if a.Zone != "" {
-		return JoinHostPort(ip+"%"+a.Zone, strconv.Itoa(a.Port))
+		return JoinHostPort(ip+"%"+a.Zone, itoa.Itoa(a.Port))
 	}
-	return JoinHostPort(ip, strconv.Itoa(a.Port))
+	return JoinHostPort(ip, itoa.Itoa(a.Port))
 }
 
 func (a *UDPAddr) isWildcard() bool {
@@ -78,7 +79,7 @@ func (a *UDPAddr) opAddr() Addr {
 // recommended, because it will return at most one of the host name's
 // IP addresses.
 //
-// See func [Dial] for a description of the network and address
+// See func Dial for a description of the network and address
 // parameters.
 func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 
@@ -111,17 +112,6 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 	}
 
 	return &UDPAddr{IP: ip.AsSlice(), Port: port}, nil
-}
-
-// UDPAddrFromAddrPort returns addr as a [UDPAddr]. If addr.IsValid() is false,
-// then the returned UDPAddr will contain a nil IP field, indicating an
-// address family-agnostic unspecified address.
-func UDPAddrFromAddrPort(addr netip.AddrPort) *UDPAddr {
-	return &UDPAddr{
-		IP:   addr.Addr().AsSlice(),
-		Zone: addr.Addr().Zone(),
-		Port: int(addr.Port()),
-	}
 }
 
 // UDPConn is the implementation of the Conn and PacketConn interfaces
@@ -216,6 +206,30 @@ func (c *UDPConn) SyscallConn() (syscall.RawConn, error) {
 	return nil, errors.New("SyscallConn not implemented")
 }
 
+// ListenUDP acts like ListenPacket for UDP networks.
+func ListenUDP(network string, laddr *UDPAddr) (*UDPConn, error) {
+	switch network {
+	case "udp", "udp4", "udp6":
+	default:
+		return nil, UnknownNetworkError(network)
+	}
+	fd, err := netdev.Socket(_AF_INET, _SOCK_DGRAM, _IPPROTO_UDP)
+	if err != nil {
+		return nil, err
+	}
+	laddrport := laddr.AddrPort()
+	err = netdev.Bind(fd, laddrport)
+	if err != nil {
+		netdev.Close(fd)
+		return nil, err
+	}
+	return &UDPConn{
+		fd:    fd,
+		net:   network,
+		laddr: laddr,
+	}, nil
+}
+
 // TINYGO: Use netdev for Conn methods: Read = Recv, Write = Send, etc.
 
 func (c *UDPConn) Read(b []byte) (int, error) {
@@ -244,7 +258,28 @@ func (c *UDPConn) Write(b []byte) (int, error) {
 
 // ReadFrom implements the PacketConn ReadFrom method.
 func (c *UDPConn) ReadFrom(b []byte) (int, Addr, error) {
-	return 0, nil, errors.New("ReadFrom not implemented")
+	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil && err != io.EOF {
+		err = &OpError{Op: "read", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
+	}
+	return n, c.raddr, err
+}
+
+// ReadFromUDP reads a UDP packet from c, copying the payload into b.
+// It returns the number of bytes read and the remote address.
+func (c *UDPConn) ReadFromUDP(b []byte) (int, *UDPAddr, error) {
+	n, addr, err := c.ReadFrom(b)
+	if err != nil {
+		return 0, nil, err
+	}
+	ua, ok := addr.(*UDPAddr)
+	if !ok {
+		return 0, nil, &OpError{Op: "readfrom", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: errors.New("unexpected address type")}
+	}
+	return n, ua, err
 }
 
 // ReadMsgUDP reads a message from c, copying the payload into b and
@@ -261,7 +296,19 @@ func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 
 // WriteTo implements the PacketConn WriteTo method.
 func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
-	return 0, errors.New("WriteTo not implemented")
+	n, err := netdev.Send(c.fd, b, 0, c.writeDeadline)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: addr, Err: err}
+	}
+	return n, err
+}
+
+// WriteToUDP writes a UDP packet to addr via c, returning the number of bytes written.
+func (c *UDPConn) WriteToUDP(b []byte, addr *UDPAddr) (int, error) {
+	return c.WriteTo(b, addr)
 }
 
 // WriteMsgUDP writes a message to addr via c if c isn't connected, or
@@ -270,7 +317,7 @@ func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
 // data is copied from oob. It returns the number of payload and
 // out-of-band bytes written.
 //
-// The packages [golang.org/x/net/ipv4] and [golang.org/x/net/ipv6] can be
+// The packages golang.org/x/net/ipv4 and golang.org/x/net/ipv6 can be
 // used to manipulate IP-level socket options in oob.
 func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {
 	return 0, 0, errors.New("WriteMsgUDP not implemented")
